@@ -201,7 +201,16 @@ def encode_file_to_binary(file_bytes, file_type, compression_strength, progress_
         final_data = file_type_bytes + b':' + iv + len(encrypted_aes_key).to_bytes(2, 'big') + encrypted_aes_key + encrypted_data
 
         final_size = len(final_data) / 1024
-        size_reduction_percent = ((original_size - final_size) / original_size) * 100 if original_size > 0 else 0
+        # Clamp size_reduction_percent to a reasonable range and handle negative values
+        if original_size > 0:
+            size_reduction_percent = ((original_size - final_size) / original_size) * 100
+            # Clamp to -99.99% ... 99.99% for display
+            if size_reduction_percent > 99.99:
+                size_reduction_percent = 99.99
+            elif size_reduction_percent < -99.99:
+                size_reduction_percent = -99.99
+        else:
+            size_reduction_percent = 0
         total_time = time.time() - start_time
         st.write(f"Total processing time: {total_time:.2f} seconds")
 
@@ -370,7 +379,18 @@ with tabs[0]:
                         st.session_state.encoded_files_data.append(encrypted_data)
                         st.session_state.encoded_file_names.append(final_output_name)
 
-                        st.success(f"Encoded '{uploaded_file.name}' successfully! Size reduced by {stats['size_reduction_percent']:.2f}%")
+                        # Show result message based on size reduction
+                        if stats['size_reduction_percent'] >= 0:
+                            st.success(
+                                f"Encoded '{uploaded_file.name}' successfully! Size reduced by {stats['size_reduction_percent']:.2f}%"
+                            )
+                        else:
+                            st.success(
+                                f"Encoded '{uploaded_file.name}' successfully! Size increased by {abs(stats['size_reduction_percent']):.2f}%"
+                            )
+                            st.info(
+                                "Note: For some files (especially already compressed or small files), the encoded output may be larger due to encryption and compression overhead."
+                            )
                         st.write(f"Original size: {stats['original_size']:.2f} KB, Final size: {stats['final_size']:.2f} KB")
 
                     except Exception as e:
@@ -384,23 +404,25 @@ with tabs[0]:
                     for i, (private_pem, encrypted_data, final_output_name) in enumerate(zip(st.session_state.private_keys, st.session_state.encoded_files_data, st.session_state.encoded_file_names)):
                         with st.expander(f"RSA-4096 Private Key for File {i + 1} (No Headers)", expanded=True):
                             st.code(private_pem, language="text")
-                            if st.button(f"Copy Key {i + 1}", key=f"copy_key_button_{i}"):
-                                js = f"""
-                                <script>
-                                function copyToClipboard() {{
-                                    var text = `{private_pem}`;
-                                    navigator.clipboard.writeText(text).then(function() {{
-                                        document.getElementById('copied-message-{i}').style.display = 'block';
+                            # Show a "Copied!" alert when the user copies the key using the built-in copy button
+                            js = f"""
+                            <script>
+                            const codeBlock = document.querySelectorAll('pre code')[{i}];
+                            if (codeBlock) {{
+                                codeBlock.addEventListener('copy', function() {{
+                                    var msg = document.getElementById('copied-message-{i}');
+                                    if (msg) {{
+                                        msg.style.display = 'inline';
                                         setTimeout(function() {{
-                                            document.getElementById('copied-message-{i}').style.display = 'none';
+                                            msg.style.display = 'none';
                                         }}, 2000);
-                                    }});
-                                }}
-                                </script>
-                                <button onclick="copyToClipboard()">Copy Key</button>
-                                <span id="copied-message-{i}" style="display:none; color:green; font-size:small; margin-left:10px;">Copied</span>
-                                """
-                                components.html(js, height=50)
+                                    }}
+                                }});
+                            }}
+                            </script>
+                            <span id="copied-message-{i}" style="display:none; color:green; font-size:small; margin-left:10px;">Copied!</span>
+                            """
+                            components.html(js, height=20)
 
                         st.download_button(
                             label=f"Download {final_output_name}",
@@ -476,6 +498,8 @@ with tabs[1]:
                             file_name=final_output_name,
                             mime=mime_types[file_type]
                         )
+                        auto_download(file_bytes, final_output_name, mime_types[file_type])
+
                         st.session_state.attempts.pop(file_hash, None)
                         st.session_state.reset = True
                         st.query_params.clear()
