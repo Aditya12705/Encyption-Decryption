@@ -1,0 +1,5 @@
+streamlit
+pymupdf
+zstandard
+cryptography
+python-docx
